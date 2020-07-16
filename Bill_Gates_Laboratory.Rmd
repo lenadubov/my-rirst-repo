@@ -1,0 +1,308 @@
+---
+title: "Day 11. Text Mining. Sentiment Analysis"
+author: "Elena Dubova"
+date: "6/12/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r echo=FALSE, warning=FALSE}
+setwd("~/Desktop/Summer Course/Summer-Course-2020-BDMLRWA/Teaching Materials/Day11")
+```
+
+![Bill Gates](https://upload.wikimedia.org/wikipedia/commons/5/5c/Bill_Gates_June_2015.png){width=20% hight=20%}
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+packages <- c("rtweet", "dplyr", "tidytext", "slam", "tm", "slam")
+packages_to_install <- packages[!(packages %in% installed.packages()[,"Package"])]
+if(length(packages_to_install)) install.packages(packages_to_install) 
+```
+
+```{r,warning=FALSE, message=FALSE}
+
+library(rtweet)
+library(dplyr)
+library(tidytext)
+library(ggplot2)
+```
+
+```{r warning=FALSE, message=FALSE}
+library(rtweet)
+
+start <- Sys.time()
+
+bill_gates <- get_timeline("@BillGates", n= 1000)
+
+end <- Sys.time()
+
+#time to get 1000 tweets of Bill Gates
+end-start 
+
+```
+
+Some data preprocessing.
+```{r warning=FALSE, message=FALSE}
+library(dplyr)
+library(tidytext)
+
+bill_gates_clean <- bill_gates %>%
+  filter(is_retweet==FALSE) %>% #exclude retweets
+  filter(is.na(reply_to_status_id)) #exclude replies
+
+```
+
+# Hashtags
+
+```{r warning=FALSE, message=FALSE}
+
+library(slam)
+library(tm)
+library(wordcloud)
+
+hashtags <- unlist(bill_gates_clean$hashtags) #flattern nested lists 
+hashtags <- hashtags[!is.na(hashtags)] #remove cases with no hashtags translated as NAs
+
+set.seed(22)
+wordcloud(hashtags, min.freq=2, scale=c(3.5, .5), random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Paired"))
+```
+
+Let's look at text the data
+```{r warning=FALSE}
+
+bill_gates_clean_text <- bill_gates_clean[, c('created_at', 'text')]
+bill_gates_clean_text %>%
+  mutate(year = format(created_at, "%Y")) %>%
+  group_by(year) %>%
+  summarise(total = n()) 
+
+```
+
+```{r warning=FALSE}
+
+library(ggplot2)
+
+bill_gates_clean_text <- bill_gates_clean_text %>%
+  mutate(year = format(created_at, "%Y")) 
+
+bill_gates_clean_text %>%
+  group_by(year) %>%
+  summarise(total = n()) %>%
+  ggplot(aes(year, total, group = 1)) + geom_line(col='blue')
+
+```
+
+```{r}
+
+str(bill_gates_clean_text)
+
+```
+
+To do operations on text we need to transform it into a vector of words.
+```{r}
+
+words <- bill_gates_clean_text%>%
+  select(year, text)%>%
+  unnest_tokens(output = word,input = text)
+
+words
+
+```
+
+# Sentiment analysis: Polarity and Emotions
+
+We fetch polarity of the words from pre-build dictionary. Let us have a look at a couple of them. 
+
+## 1. BING dictionary. 
+A collection of words classified into two categories: positive and negative. 
+
+```{r}
+
+bing <- get_sentiments('bing')
+tail(bing)
+
+```
+
+```{r}
+
+bing %>%
+  group_by(sentiment) %>%
+  summarise(count=n())
+
+```
+
+Let us see the polarity of Bill Gates's tweets.
+```{r, echo=FALSE, warning=FALSE}
+
+words %>%
+  inner_join(bing, by='word') %>%
+  group_by(sentiment) %>%
+  summarise(count=n())
+
+```
+
+```{r}
+
+words %>%
+  inner_join(bing, by='word') %>%
+  group_by(sentiment) %>%
+  summarise(count=n()) %>%
+  ggplot(aes(x = sentiment, y = count)) + geom_bar(stat = 'identity', fill=c('red', 'darkgreen')) + ggtitle('Polarity in Bill Gates Tweets')
+
+```
+
+## 2. AFINN dictionary.
+Polarity value is assigned to each word. 
+
+```{r warning=FALSE}
+
+library(textdata)
+
+afinn <- get_sentiments('afinn')
+tail(afinn)
+
+```
+
+```{r}
+
+afinn %>%
+  mutate(positive = value > 0, negative = value < 0) %>%
+  summarise(positive=sum(positive),negative=sum(negative))
+
+
+```
+```{r, echo=FALSE, warning=FALSE}
+
+afinn %>%
+  mutate(positive = value > 0, negative = value < 0) %>%
+  group_by(positive) %>%
+  summarise(sum_positive = sum(value))
+
+```
+
+```{r}
+
+afinn %>%
+  group_by(value) %>%
+  count()
+
+```
+
+```{r}
+
+words %>%
+  inner_join(afinn, by='word') %>%
+  #select(value) %>%
+  ggplot(aes(value)) + geom_histogram(bins = 15) + ggtitle('Polarity in Bill Gates Tweets (afinn)')
+
+```
+
+```{r}
+
+words %>%
+  inner_join(afinn, by='word') %>%
+  select(value) %>%
+  ggplot(aes(value)) + geom_histogram(bins = 15) + ggtitle('Polarity in Bill Gates Tweets (afinn)')
+
+```
+
+```{r}
+words %>%
+  inner_join(afinn, by='word') %>%
+  select(year, value) %>%
+  ggplot(aes(value, color=year)) + geom_density() + ggtitle('Polarity in Bill Gates Tweets (afinn)')
+
+```
+
+```{r}
+words %>%
+  inner_join(afinn, by='word') %>%
+  summarise(mean_sentiment=mean(value)) 
+
+```
+
+Class Discussion: **What can it tell you about Bill Gates tweets?**
+
+## 3. NRC dictionary.
+Distinguish between 8 primary emotions plus polarity. 
+
+```{r warning=FALSE}
+
+library(textdata)
+
+nrc <- get_sentiments('nrc')
+tail(nrc)
+
+```
+
+```{r}
+
+nrc_polarity <- nrc %>%
+  group_by(sentiment) %>% 
+  filter(sentiment == 'positive' | sentiment == 'negative') 
+  
+nrc_polarity %>%
+  count()
+```
+```{r}
+
+nrc_emotions <- nrc %>%
+  group_by(sentiment) %>% 
+  filter(!(sentiment == 'positive' | sentiment == 'negative') )
+  
+nrc_emotions %>%
+  count()
+
+```
+
+
+```{r}
+
+words %>%
+  inner_join(nrc_emotions, by='word') %>%
+  group_by(sentiment) %>%
+  summarise(n_words = n()) %>%
+  arrange(desc(n_words)) %>%
+  ggplot(aes(x=reorder(sentiment, n_words), y=n_words, fill = sentiment)) + geom_bar(stat='identity') + coord_flip() + ggtitle('Emotions in Bill Gates Tweets (Plutchik)') + xlab('Emotions') + ylab('Number of words')
+
+```
+
+```{r}
+
+ my_colors = c('darkgreen', 'red')
+
+words %>%
+  inner_join(nrc_emotions, by='word') %>%
+  group_by(sentiment) %>%
+  summarise(n_words = n()) %>%
+  mutate(positive = sentiment %in% c('trust', 'anticipation', 'joy', 'surprise')) %>%
+  ggplot(aes(x=reorder(sentiment, n_words), y=n_words, fill = positive)) + geom_bar(stat='identity', palette=my_colors) + coord_flip() + ggtitle('Emotions in Bill Gates Tweets (Plutchik)') + xlab('Emotions') + ylab('Number of words')
+
+```
+
+# Exercise
+
+Let's explore somebody else!
+Do the analysis on Andrew Ng - a wonderful educator and a legendary data scientist. Or Pick your hero and tell us the result of your analysis. 
+Feel free to alter the code and try things out. 
+
+Start by extracting the data.
+```{r}
+
+cool_data_scietist <- get_timeline("@AndrewYNg", n= 1000)
+cool_data_scietist_clean <- cool_data_scietist %>%
+  filter(is_retweet==FALSE) %>% 
+  filter(is.na(reply_to_status_id)) 
+
+```
+
+Build word cloud from hashtags.
+```{r}
+
+```
+
+Do sentiment analysis using at least 1 dictionary.
+```{r}
+
+```
